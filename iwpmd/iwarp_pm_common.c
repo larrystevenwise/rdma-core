@@ -270,13 +270,29 @@ void destroy_iwpm_socket(int pm_sock)
 }
 
 /**
+ * iwpm_nladdr_required - Return 1 if this attr must be present
+ *
+ * Enables supporting old kernel drivers.
+ */
+static int iwpm_nlattr_required(int nlattr)
+{
+	switch (nlattr) {
+	case IWPM_NLA_MANAGE_FLAGS:
+	case IWPM_NLA_QUERY_FLAGS:
+		return 0;
+	default:
+		return 1;
+	}
+}
+
+/**
  * check_iwpm_nlattr - Check for NULL netlink attribute
  */
 static int check_iwpm_nlattr(struct nlattr *nltb[], int nla_count)
 {
 	int i, ret = 0;
         for (i = 1; i < nla_count; i++) {
-		if (!nltb[i]) {
+		if (!nltb[i] && iwpm_nlattr_required(i)) {
 			iwpm_debug(IWARP_PM_NETLINK_DBG, "check_iwpm_nlattr: NULL (attr idx = %d)\n", i);
 			ret = -EINVAL;
 		}

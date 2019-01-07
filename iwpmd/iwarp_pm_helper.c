@@ -352,7 +352,7 @@ static iwpm_mapped_port *get_iwpm_port(int client_idx, struct sockaddr_storage *
  * @local_addr: local address to be mapped (IP address and TCP port)
  * @client_idx: the index of the client owner of the mapped port
  */
-iwpm_mapped_port *create_iwpm_mapped_port(struct sockaddr_storage *local_addr, int client_idx)
+iwpm_mapped_port *create_iwpm_mapped_port(struct sockaddr_storage *local_addr, int client_idx, __u32 flags)
 {
 	iwpm_mapped_port *iwpm_port;
 	struct sockaddr_storage mapped_addr;
@@ -362,8 +362,13 @@ iwpm_mapped_port *create_iwpm_mapped_port(struct sockaddr_storage *local_addr, i
 	if (get_iwpm_ip_addr(local_addr, &mapped_addr))
 		goto create_mapped_port_error;
 	/* get a tcp port from the host net stack */
-	if (get_iwpm_tcp_port(local_addr->ss_family, 0, &mapped_addr, &new_sd))
-		goto create_mapped_port_error;
+	if (flags & IWPM_FLAGS_NO_PORT_MAP) {
+		mapped_addr = *local_addr;
+		new_sd = -1;
+	} else {
+		if (get_iwpm_tcp_port(local_addr->ss_family, 0, &mapped_addr, &new_sd))
+			goto create_mapped_port_error;
+	}
 
 	iwpm_port = get_iwpm_port(client_idx, local_addr, &mapped_addr, new_sd);
 	return iwpm_port;

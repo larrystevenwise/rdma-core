@@ -35,6 +35,22 @@ enum {
 	RDMA_NL_RDMA_CM_NUM_ATTR,
 };
 
+enum {
+
+	/* The minimum version that the iwpm kernel supports */
+	IWPM_UABI_VERSION_MIN	= 3,
+
+	/* The latest version that the iwpm kernel supports */
+	IWPM_UABI_VERSION	= 4,
+};
+
+/* iwarp port mapper message flags */
+enum {
+
+	/* Do not map the port for this IWPM request */
+	IWPM_FLAGS_NO_PORT_MAP = (1 << 0),
+};
+
 /* iwarp port mapper op-codes */
 enum {
 	RDMA_NL_IWPM_REG_PID = 0,
@@ -83,13 +99,21 @@ enum {
 	IWPM_NLA_MANAGE_MAPPING_UNSPEC = 0,
 	IWPM_NLA_MANAGE_MAPPING_SEQ,
 	IWPM_NLA_MANAGE_ADDR,
-	IWPM_NLA_MANAGE_MAPPED_LOC_ADDR,
+	IWPM_NLA_MANAGE_FLAGS,
+	IWPM_NLA_MANAGE_MAPPING_MAX
+};
+
+enum {
+	IWPM_NLA_RMANAGE_MAPPING_UNSPEC = 0,
+	IWPM_NLA_RMANAGE_MAPPING_SEQ,
+	IWPM_NLA_RMANAGE_ADDR,
+	IWPM_NLA_RMANAGE_MAPPED_LOC_ADDR,
+	/* The following maintains bisectability of rdma-core */
+	IWPM_NLA_MANAGE_MAPPED_LOC_ADDR = IWPM_NLA_RMANAGE_MAPPED_LOC_ADDR,
 	IWPM_NLA_RMANAGE_MAPPING_ERR,
 	IWPM_NLA_RMANAGE_MAPPING_MAX
 };
 
-#define IWPM_NLA_MANAGE_MAPPING_MAX 3
-#define IWPM_NLA_QUERY_MAPPING_MAX  4
 #define IWPM_NLA_MAPINFO_SEND_MAX   3
 
 enum {
@@ -97,6 +121,15 @@ enum {
 	IWPM_NLA_QUERY_MAPPING_SEQ,
 	IWPM_NLA_QUERY_LOCAL_ADDR,
 	IWPM_NLA_QUERY_REMOTE_ADDR,
+	IWPM_NLA_QUERY_FLAGS,
+	IWPM_NLA_QUERY_MAPPING_MAX,
+};
+
+enum {
+	IWPM_NLA_RQUERY_MAPPING_UNSPEC = 0,
+	IWPM_NLA_RQUERY_MAPPING_SEQ,
+	IWPM_NLA_RQUERY_LOCAL_ADDR,
+	IWPM_NLA_RQUERY_REMOTE_ADDR,
 	IWPM_NLA_RQUERY_MAPPED_LOC_ADDR,
 	IWPM_NLA_RQUERY_MAPPED_REM_ADDR,
 	IWPM_NLA_RQUERY_MAPPING_ERR,
@@ -229,9 +262,11 @@ enum rdma_nldev_command {
 	RDMA_NLDEV_CMD_GET, /* can dump */
 	RDMA_NLDEV_CMD_SET,
 
-	/* 3 - 4 are free to use */
+	RDMA_NLDEV_CMD_NEWLINK,
 
-	RDMA_NLDEV_CMD_PORT_GET = 5, /* can dump */
+	RDMA_NLDEV_CMD_DELLINK,
+
+	RDMA_NLDEV_CMD_PORT_GET, /* can dump */
 
 	/* 6 - 8 are free to use */
 
@@ -429,6 +464,11 @@ enum rdma_nldev_attr {
 	RDMA_NLDEV_ATTR_DRIVER_U32,		/* u32 */
 	RDMA_NLDEV_ATTR_DRIVER_S64,		/* s64 */
 	RDMA_NLDEV_ATTR_DRIVER_U64,		/* u64 */
+
+	/*
+	 * Identifies the rdma driver. eg: "rxe" or "siw"
+	 */
+	RDMA_NLDEV_ATTR_LINK_TYPE,		/* string */
 
 	/*
 	 * Always the end

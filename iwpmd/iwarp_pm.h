@@ -236,7 +236,7 @@ int is_wcard_ipaddr(struct sockaddr_storage *);
 
 /* iwarp_pm_helper.c */
 
-iwpm_mapped_port *create_iwpm_mapped_port(struct sockaddr_storage *, int);
+iwpm_mapped_port *create_iwpm_mapped_port(struct sockaddr_storage *, int, __u32 flags);
 
 iwpm_mapped_port *reopen_iwpm_mapped_port(struct sockaddr_storage *, struct sockaddr_storage *, int);
 

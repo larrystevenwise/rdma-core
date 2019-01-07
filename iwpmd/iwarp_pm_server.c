@@ -37,7 +37,7 @@
 #include "iwarp_pm.h"
 
 static const char iwpm_ulib_name [] = "iWarpPortMapperUser";
-static int iwpm_version = 3;
+static int iwpm_version = IWPM_UABI_VERSION;
 
 LIST_HEAD(mapping_reqs);		      /* list of map tracking objects */
 LIST_HEAD(pending_messages);		      /* list of pending wire messages */
@@ -288,9 +288,10 @@ register_pid_error:
 }
 
 /* Add mapping request - nlmsg attributes */
-static struct nla_policy manage_map_policy[IWPM_NLA_MANAGE_MAPPING_MAX] = {
-        [IWPM_NLA_MANAGE_MAPPING_SEQ]        = { .type = NLA_U32 },
-        [IWPM_NLA_MANAGE_ADDR]               = { .minlen = sizeof(struct sockaddr_storage) }
+static struct nla_policy manage_map_policy[IWPM_NLA_ADD_MAPPING_MAX] = {
+        [IWPM_NLA_ADD_MAPPING_SEQ]        = { .type = NLA_U32 },
+        [IWPM_NLA_ADD_MAPPING_ADDR]               = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_ADD_MAPPING_FLAGS]              = { .type = NLA_U32 }
 };
 
 /**
@@ -302,15 +303,15 @@ static struct nla_policy manage_map_policy[IWPM_NLA_MANAGE_MAPPING_MAX] = {
  * Process a mapping request for a local address and send a response to the client
  * which contains the mapped local address (IP address and TCP port)
  * nlmsg response attributes:
- *	[IWPM_NLA_MANAGE_MAPPING_SEQ]
- *	[IWPM_NLA_MANAGE_ADDR]
- *	[IWPM_NLA_MANAGE_MAPPED_LOC_ADDR]
- *	[IWPM_NLA_RMANAGE_MAPPING_ERR]
+ *	[IWPM_NLA_RADD_MAPPING_SEQ]
+ *	[IWPM_NLA_RADD_MAPPING_ADDR]
+ *	[IWPM_NLA_RADD_MAPPING_MAPPED_LOC_ADDR]
+ *	[IWPM_NLA_RADD_MAPPING_ERR]
  */
 static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, int nl_sock)
 {
 	iwpm_mapped_port *iwpm_port = NULL;
-	struct nlattr *nltb [IWPM_NLA_MANAGE_MAPPING_MAX];
+	struct nlattr *nltb [IWPM_NLA_ADD_MAPPING_MAX];
 	struct nl_msg *resp_nlmsg = NULL;
 	struct sockaddr_storage *local_addr;
 	int not_mapped = 1;
@@ -318,13 +319,15 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 	const char *msg_type = "Add Mapping Request";
 	const char *str_err = "";
 	int ret = -EINVAL;
+	__u32 flags;
 
-	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_MANAGE_MAPPING_MAX, manage_map_policy, nltb, msg_type)) {
+	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_ADD_MAPPING_MAX, manage_map_policy, nltb, msg_type)) {
 		err_code = IWPM_INVALID_NLMSG_ERR;
 		str_err = "Received Invalid nlmsg";
 		goto add_mapping_error;
 	}
-	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_MANAGE_ADDR]);
+	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_ADD_MAPPING_ADDR]);
+	flags = nla_get_u32(nltb[IWPM_NLA_ADD_MAPPING_FLAGS]);
 
 	iwpm_port = find_iwpm_mapping(local_addr, not_mapped);
 	if (iwpm_port) {
@@ -337,7 +340,7 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 		}
 
 	} else {
-		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx);
+		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx, flags);
 		if (!iwpm_port) {
 			err_code = IWPM_CREATE_MAPPING_ERR;
 			str_err = "Unable to create new mapping";
@@ -351,15 +354,15 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 		goto add_mapping_free_error;
 	}
 	str_err = "Invalid nlmsg attribute";
-	if ((ret = nla_put_u32(resp_nlmsg, IWPM_NLA_MANAGE_MAPPING_SEQ, req_nlh->nlmsg_seq)))
+	if ((ret = nla_put_u32(resp_nlmsg, IWPM_NLA_RADD_MAPPING_SEQ, req_nlh->nlmsg_seq)))
 		goto add_mapping_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_MANAGE_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RADD_MAPPING_ADDR,
 				sizeof(struct sockaddr_storage), &iwpm_port->local_addr)))
 		goto add_mapping_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_MANAGE_MAPPED_LOC_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RADD_MAPPING_MAPPED_LOC_ADDR,
 				sizeof(struct sockaddr_storage), &iwpm_port->mapped_addr)))
 		goto add_mapping_free_error;
-	if ((ret = nla_put_u16(resp_nlmsg, IWPM_NLA_RMANAGE_MAPPING_ERR, err_code)))
+	if ((ret = nla_put_u16(resp_nlmsg, IWPM_NLA_RADD_MAPPING_ERR, err_code)))
 		goto add_mapping_free_error;
 
 	if ((ret = send_iwpm_nlmsg(nl_sock, resp_nlmsg, req_nlh->nlmsg_pid))) {
@@ -391,8 +394,9 @@ add_mapping_error:
 /* Query mapping request - nlmsg attributes */
 static struct nla_policy query_map_policy[IWPM_NLA_QUERY_MAPPING_MAX] = {
         [IWPM_NLA_QUERY_MAPPING_SEQ]         = { .type = NLA_U32 },
-        [IWPM_NLA_QUERY_LOCAL_ADDR]          = { .minlen = sizeof(struct sockaddr_storage) },
-        [IWPM_NLA_QUERY_REMOTE_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) }
+        [IWPM_NLA_QUERY_MAPPING_LOCAL_ADDR]          = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_QUERY_MAPPING_REMOTE_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_QUERY_MAPPING_FLAGS]               = { .type = NLA_U32 }
 };
 
 /**
@@ -420,20 +424,22 @@ static int process_iwpm_query_mapping(struct nlmsghdr *req_nlh, int client_idx, 
 	const char *msg_type = "Add & Query Mapping Request";
 	const char *str_err = "";
 	int ret = -EINVAL;
+	__u32 flags;
 
 	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_QUERY_MAPPING_MAX, query_map_policy, nltb, msg_type)) {
 		err_code = IWPM_INVALID_NLMSG_ERR;
 		str_err = "Received Invalid nlmsg";
 		goto query_mapping_error;
 	}
-	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_LOCAL_ADDR]);
-	remote_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_REMOTE_ADDR]);
+	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_MAPPING_LOCAL_ADDR]);
+	remote_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_MAPPING_REMOTE_ADDR]);
+	flags = nla_get_u32(nltb[IWPM_NLA_QUERY_MAPPING_FLAGS]);
 
 	iwpm_port = find_iwpm_mapping(local_addr, not_mapped);
 	if (iwpm_port) {
 		atomic_fetch_add(&iwpm_port->ref_cnt, 1);
 	} else {
-		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx);
+		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx, flags);
 		if (!iwpm_port) {
 			err_code = IWPM_CREATE_MAPPING_ERR;
 			str_err = "Unable to create new mapping";
@@ -525,19 +531,19 @@ static int process_iwpm_remove_mapping(struct nlmsghdr *req_nlh, int client_idx,
 {
 	iwpm_mapped_port *iwpm_port = NULL;
 	struct sockaddr_storage *local_addr;
-	struct nlattr *nltb [IWPM_NLA_MANAGE_MAPPING_MAX];
+	struct nlattr *nltb [IWPM_NLA_REMOVE_MAPPING_MAX];
 	int not_mapped = 1;
 	const char *msg_type = "Remove Mapping Request";
 	int ret = 0;
 
-	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_MANAGE_MAPPING_MAX, manage_map_policy, nltb, msg_type)) {
+	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_REMOVE_MAPPING_MAX, manage_map_policy, nltb, msg_type)) {
 		send_iwpm_error_msg(req_nlh->nlmsg_seq, IWPM_INVALID_NLMSG_ERR, client_idx, nl_sock);
 		syslog(LOG_WARNING, "process_remove_mapping: Received Invalid nlmsg from client = %d\n",
 				client_idx);
 		ret = -EINVAL;
 		goto remove_mapping_exit;
 	}
-	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_MANAGE_ADDR]);
+	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_REMOVE_MAPPING_ADDR]);
 	iwpm_debug(IWARP_PM_NETLINK_DBG, "process_remove_mapping: Going to remove mapping"
 			" (client idx = %d)\n", client_idx);
 
@@ -583,16 +589,16 @@ static int send_conn_info_nlmsg(struct sockaddr_storage *local_addr,
 	str_err = "Invalid nlmsg attribute";
 	if ((ret = nla_put_u32(resp_nlmsg, IWPM_NLA_QUERY_MAPPING_SEQ, nlmsg_seq)))
 		goto nlmsg_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_QUERY_LOCAL_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_QUERY_MAPPING_LOCAL_ADDR,
 				sizeof(struct sockaddr_storage), local_addr)))
 		goto nlmsg_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_QUERY_REMOTE_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_QUERY_MAPPING_REMOTE_ADDR,
 				sizeof(struct sockaddr_storage), remote_addr)))
 		goto nlmsg_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RQUERY_MAPPED_LOC_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RQUERY_MAPPING_MAPPED_LOC_ADDR,
 				sizeof(struct sockaddr_storage), mapped_loc_addr)))
 		goto nlmsg_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RQUERY_MAPPED_REM_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RQUERY_MAPPING_MAPPED_REM_ADDR,
 				sizeof(struct sockaddr_storage), mapped_rem_addr)))
 		goto nlmsg_free_error;
 	if ((ret = nla_put_u16(resp_nlmsg, IWPM_NLA_RQUERY_MAPPING_ERR, nlmsg_err)))
@@ -713,8 +719,8 @@ static int process_iwpm_wire_request(iwpm_msg_parms *msg_parms, int nl_sock,
  *	[IWPM_NLA_QUERY_MAPPING_SEQ]
  * 	[IWPM_NLA_QUERY_LOCAL_ADDR]
  *	[IWPM_NLA_QUERY_REMOTE_ADDR]
- *	[IWPM_NLA_RQUERY_MAPPED_LOC_ADDR]
- *	[IWPM_NLA_RQUERY_MAPPED_REM_ADDR]
+ *	[IWPM_NLA_RQUERY_MAPPING_MAPPED_LOC_ADDR]
+ *	[IWPM_NLA_RQUERY_MAPPING_MAPPED_REM_ADDR]
  *	[IWPM_NLA_RQUERY_MAPPING_ERR]
  */
 static int process_iwpm_wire_accept(iwpm_msg_parms *msg_parms, int nl_sock,

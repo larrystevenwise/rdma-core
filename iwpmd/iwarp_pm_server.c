@@ -35,9 +35,12 @@
 #include <systemd/sd-daemon.h>
 #include <getopt.h>
 #include "iwarp_pm.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 static const char iwpm_ulib_name [] = "iWarpPortMapperUser";
-static int iwpm_version = 3;
+static long iwpm_version = IWPM_UABI_VERSION;
 
 LIST_HEAD(mapping_reqs);		      /* list of map tracking objects */
 LIST_HEAD(pending_messages);		      /* list of pending wire messages */
@@ -290,7 +293,8 @@ register_pid_error:
 /* Add mapping request - nlmsg attributes */
 static struct nla_policy manage_map_policy[IWPM_NLA_MANAGE_MAPPING_MAX] = {
         [IWPM_NLA_MANAGE_MAPPING_SEQ]        = { .type = NLA_U32 },
-        [IWPM_NLA_MANAGE_ADDR]               = { .minlen = sizeof(struct sockaddr_storage) }
+        [IWPM_NLA_MANAGE_ADDR]               = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_MANAGE_FLAGS]              = { .type = NLA_U32 }
 };
 
 /**
@@ -302,9 +306,9 @@ static struct nla_policy manage_map_policy[IWPM_NLA_MANAGE_MAPPING_MAX] = {
  * Process a mapping request for a local address and send a response to the client
  * which contains the mapped local address (IP address and TCP port)
  * nlmsg response attributes:
- *	[IWPM_NLA_MANAGE_MAPPING_SEQ]
- *	[IWPM_NLA_MANAGE_ADDR]
- *	[IWPM_NLA_MANAGE_MAPPED_LOC_ADDR]
+ *	[IWPM_NLA_RMANAGE_MAPPING_SEQ]
+ *	[IWPM_NLA_RMANAGE_ADDR]
+ *	[IWPM_NLA_RMANAGE_MAPPED_LOC_ADDR]
  *	[IWPM_NLA_RMANAGE_MAPPING_ERR]
  */
 static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, int nl_sock)
@@ -318,13 +322,18 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 	const char *msg_type = "Add Mapping Request";
 	const char *str_err = "";
 	int ret = -EINVAL;
+	__u32 flags;
+	int max = IWPM_NLA_MANAGE_MAPPING_MAX;
 
-	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_MANAGE_MAPPING_MAX, manage_map_policy, nltb, msg_type)) {
+	if (iwpm_version != IWPM_UABI_VERSION)
+		max--;
+	if (parse_iwpm_nlmsg(req_nlh, max, manage_map_policy, nltb, msg_type)) {
 		err_code = IWPM_INVALID_NLMSG_ERR;
 		str_err = "Received Invalid nlmsg";
 		goto add_mapping_error;
 	}
 	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_MANAGE_ADDR]);
+	flags = nltb[IWPM_NLA_MANAGE_FLAGS] ? nla_get_u32(nltb[IWPM_NLA_MANAGE_FLAGS]) : 0; 
 
 	iwpm_port = find_iwpm_mapping(local_addr, not_mapped);
 	if (iwpm_port) {
@@ -337,7 +346,7 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 		}
 
 	} else {
-		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx);
+		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx, flags);
 		if (!iwpm_port) {
 			err_code = IWPM_CREATE_MAPPING_ERR;
 			str_err = "Unable to create new mapping";
@@ -351,12 +360,12 @@ static int process_iwpm_add_mapping(struct nlmsghdr *req_nlh, int client_idx, in
 		goto add_mapping_free_error;
 	}
 	str_err = "Invalid nlmsg attribute";
-	if ((ret = nla_put_u32(resp_nlmsg, IWPM_NLA_MANAGE_MAPPING_SEQ, req_nlh->nlmsg_seq)))
+	if ((ret = nla_put_u32(resp_nlmsg, IWPM_NLA_RMANAGE_MAPPING_SEQ, req_nlh->nlmsg_seq)))
 		goto add_mapping_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_MANAGE_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RMANAGE_ADDR,
 				sizeof(struct sockaddr_storage), &iwpm_port->local_addr)))
 		goto add_mapping_free_error;
-	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_MANAGE_MAPPED_LOC_ADDR,
+	if ((ret = nla_put(resp_nlmsg, IWPM_NLA_RMANAGE_MAPPED_LOC_ADDR,
 				sizeof(struct sockaddr_storage), &iwpm_port->mapped_addr)))
 		goto add_mapping_free_error;
 	if ((ret = nla_put_u16(resp_nlmsg, IWPM_NLA_RMANAGE_MAPPING_ERR, err_code)))
@@ -392,7 +401,8 @@ add_mapping_error:
 static struct nla_policy query_map_policy[IWPM_NLA_QUERY_MAPPING_MAX] = {
         [IWPM_NLA_QUERY_MAPPING_SEQ]         = { .type = NLA_U32 },
         [IWPM_NLA_QUERY_LOCAL_ADDR]          = { .minlen = sizeof(struct sockaddr_storage) },
-        [IWPM_NLA_QUERY_REMOTE_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) }
+        [IWPM_NLA_QUERY_REMOTE_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_QUERY_FLAGS]               = { .type = NLA_U32 }
 };
 
 /**
@@ -420,20 +430,25 @@ static int process_iwpm_query_mapping(struct nlmsghdr *req_nlh, int client_idx, 
 	const char *msg_type = "Add & Query Mapping Request";
 	const char *str_err = "";
 	int ret = -EINVAL;
+	__u32 flags;
+	int max = IWPM_NLA_QUERY_MAPPING_MAX;
 
-	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_QUERY_MAPPING_MAX, query_map_policy, nltb, msg_type)) {
+	if (iwpm_version != IWPM_UABI_VERSION)
+		max--;
+	if (parse_iwpm_nlmsg(req_nlh, max, query_map_policy, nltb, msg_type)) {
 		err_code = IWPM_INVALID_NLMSG_ERR;
 		str_err = "Received Invalid nlmsg";
 		goto query_mapping_error;
 	}
 	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_LOCAL_ADDR]);
 	remote_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_QUERY_REMOTE_ADDR]);
+	flags = nltb[IWPM_NLA_QUERY_FLAGS] ? nla_get_u32(nltb[IWPM_NLA_QUERY_FLAGS]) : 0;
 
 	iwpm_port = find_iwpm_mapping(local_addr, not_mapped);
 	if (iwpm_port) {
 		atomic_fetch_add(&iwpm_port->ref_cnt, 1);
 	} else {
-		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx);
+		iwpm_port = create_iwpm_mapped_port(local_addr, client_idx, flags);
 		if (!iwpm_port) {
 			err_code = IWPM_CREATE_MAPPING_ERR;
 			str_err = "Unable to create new mapping";
@@ -869,7 +884,8 @@ static int process_iwpm_wire_ack(iwpm_msg_parms *msg_parms)
 /* Mapping info message - nlmsg attributes */
 static struct nla_policy mapinfo_policy[IWPM_NLA_MAPINFO_MAX] = {
         [IWPM_NLA_MAPINFO_LOCAL_ADDR]          = { .minlen = sizeof(struct sockaddr_storage) },
-        [IWPM_NLA_MAPINFO_MAPPED_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) }
+        [IWPM_NLA_MAPINFO_MAPPED_ADDR]         = { .minlen = sizeof(struct sockaddr_storage) },
+        [IWPM_NLA_MAPINFO_FLAGS]               = { .type = NLA_U32 }
 };
 
 /**
@@ -892,14 +908,19 @@ static int process_iwpm_mapinfo(struct nlmsghdr *req_nlh, int client_idx, int nl
 	const char *msg_type = "Mapping Info Msg";
 	const char *str_err = "";
 	int ret = -EINVAL;
+	__u32 flags;
+	int max = IWPM_NLA_MAPINFO_MAX;
 
-	if (parse_iwpm_nlmsg(req_nlh, IWPM_NLA_MAPINFO_MAX, mapinfo_policy, nltb, msg_type)) {
+	if (iwpm_version != IWPM_UABI_VERSION)
+		max--;
+	if (parse_iwpm_nlmsg(req_nlh, max, mapinfo_policy, nltb, msg_type)) {
 		err_code = IWPM_INVALID_NLMSG_ERR;
 		str_err = "Received Invalid nlmsg";
 		goto process_mapinfo_error;
 	}
 	local_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_MAPINFO_LOCAL_ADDR]);
 	local_mapped_addr = (struct sockaddr_storage *)nla_data(nltb[IWPM_NLA_MAPINFO_MAPPED_ADDR]);
+	flags = nltb[IWPM_NLA_MAPINFO_FLAGS] ? nla_get_u32(nltb[IWPM_NLA_MAPINFO_FLAGS]) : 0; 
 
 	iwpm_port = find_iwpm_mapping(local_addr, not_mapped);
 	if (iwpm_port) {
@@ -915,7 +936,7 @@ static int process_iwpm_mapinfo(struct nlmsghdr *req_nlh, int client_idx, int nl
 		str_err = "Duplicate mapped port";
 		goto process_mapinfo_error;
 	}
-	iwpm_port = reopen_iwpm_mapped_port(local_addr, local_mapped_addr, client_idx);
+	iwpm_port = reopen_iwpm_mapped_port(local_addr, local_mapped_addr, client_idx, flags);
 	if (!iwpm_port) {
 		err_code = IWPM_CREATE_MAPPING_ERR;
 		str_err = "Unable to create new mapping";
@@ -1242,6 +1263,7 @@ static int send_iwpm_mapinfo_request(int nl_sock, __u32 *iwarp_clients, int leng
 		str_err = "Invalid nlmsg attribute";
 		if ((ret = nla_put_string(req_nlmsg, IWPM_NLA_MAPINFO_ULIB_NAME, iwpm_ulib_name)))
 			goto send_mapinfo_error;
+
 		if ((ret = nla_put_u16(req_nlmsg, IWPM_NLA_MAPINFO_ULIB_VER, iwpm_version)))
 			goto send_mapinfo_error;
 
@@ -1360,8 +1382,36 @@ static void daemonize_iwpm_server(void)
 		exit(EXIT_FAILURE);
 	}
 
-	syslog(LOG_WARNING, "daemonize_iwpm_server: Starting iWarp Port Mapper V%d process\n",
+	syslog(LOG_WARNING, "daemonize_iwpm_server: Starting iWarp Port Mapper V%ld process\n",
 				iwpm_version);
+}
+
+/**
+ * get_iwpm_abi - read the kernel ipwm abi and adjust our abi version to 
+ * the lower of the kernel version or our compiled-in version.
+ */
+static void get_iwpm_abi(long *abi)
+{
+	int fd;
+	char buf[32];
+	int ret;
+	long v;
+
+	*abi = IWPM_UABI_VERSION_MIN;
+	fd = open("/sys/class/iwpm/abi_version", O_RDONLY);
+	if (fd < 0) {
+		return;
+	}
+	ret = read(fd, (void *)buf, sizeof(buf));
+	if (ret <= 0) {
+		close(fd);
+		return;
+	}
+	v = strtol(buf, NULL, 0);
+	if (v < IWPM_UABI_VERSION_MIN)
+		return;
+	*abi = v < IWPM_UABI_VERSION ? v : IWPM_UABI_VERSION;
+	close(fd);
 }
 
 int main(int argc, char *argv[])
@@ -1392,6 +1442,7 @@ int main(int argc, char *argv[])
 
 		}
 	}
+	get_iwpm_abi(&iwpm_version);
 
 	openlog(NULL, LOG_NDELAY | LOG_CONS | LOG_PID, LOG_DAEMON);
 

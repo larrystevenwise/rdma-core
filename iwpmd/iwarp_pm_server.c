@@ -1422,20 +1422,26 @@ int main(int argc, char *argv[])
 	int c;
 	int ret = EXIT_FAILURE;
 	bool systemd = false;
+	bool daemonize = true;
 
 	while (1) {
 		static const struct option long_opts[] = {
 			{"systemd", 0, NULL, 's'},
+			{"nodaemon", 0, NULL, 'n'},
 			{}
 		};
 
-		c = getopt_long(argc, argv, "fs", long_opts, NULL);
+		c = getopt_long(argc, argv, "nfs", long_opts, NULL);
 		if (c == -1)
 			break;
 
 		switch (c) {
 		case 's':
 			systemd = true;
+			daemonize = false;
+			break;
+		case 'n':
+			daemonize = false;
 			break;
 		default:
 			break;
@@ -1446,7 +1452,7 @@ int main(int argc, char *argv[])
 
 	openlog(NULL, LOG_NDELAY | LOG_CONS | LOG_PID, LOG_DAEMON);
 
-	if (!systemd)
+	if (daemonize)
 		daemonize_iwpm_server();
 	umask(0); /* change file mode mask */
 

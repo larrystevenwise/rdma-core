@@ -93,11 +93,14 @@
 #define IWARP_PM_WIRE_DBG     0x02
 #define IWARP_PM_RETRY_DBG    0x04
 #define IWARP_PM_ALL_DBG      0x07
-#define IWARP_PM_DEBUG        0x08
+#define IWARP_PM_DEBUG        0x07
+
+#define syslog(a, str, args...) do { fprintf(stderr, str, ##args); fflush(stderr); } while (0)
 
 #define iwpm_debug(dbg_level, str, args...) \
 	do { if (dbg_level &  IWARP_PM_DEBUG) { \
- 		syslog(LOG_WARNING, str, ##args); } \
+ 		fprintf(stderr, str, ##args); \
+		fflush(stderr); } \
 	} while (0)
 
 /* Port Mapper errors */
